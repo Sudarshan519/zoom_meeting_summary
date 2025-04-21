@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mic + Tab Audio Recorder</title>
+</head>
+<body>
+  <h2>Record Mic + Tab Audio</h2>
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <script>
+    let recorder;
+    let micStream;
+    let tabStream;
+    let mixedStream;
+    let chunks = [];
+
+    async function startRecording() {
+      // Get mic
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Get tab with audio (user must pick a tab playing sound)
+      tabStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+
+      // Use Web Audio API to merge audio
+      const audioContext = new AudioContext();
+      const destination = audioContext.createMediaStreamDestination();
+
+      const micSource = audioContext.createMediaStreamSource(micStream);
+      const tabSource = audioContext.createMediaStreamSource(tabStream);
+
+      micSource.connect(destination);
+      tabSource.connect(destination);
+
+      // Combine video from tab + mixed audio
+      mixedStream = new MediaStream([
+        ...tabStream.getVideoTracks(),
+        ...destination.stream.getAudioTracks()
+      ]);
+
+      recorder = new MediaRecorder(mixedStream);
+      chunks = [];
+
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'mic_tab_recording.webm';
+        a.click();
+      };
+
+      recorder.start();
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('stopBtn').disabled = false;
+    }
+
+    function stopRecording() {
+      recorder.stop();
+      micStream.getTracks().forEach(t => t.stop());
+      tabStream.getTracks().forEach(t => t.stop());
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+    }
+
+    document.getElementById('startBtn').onclick = startRecording;
+    document.getElementById('stopBtn').onclick = stopRecording;
+  </script>
+</body>
+</html>

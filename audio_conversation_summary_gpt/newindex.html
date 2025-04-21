@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Threaded Audio Recorder</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    #transcripts { margin-top: 1rem; border: 1px solid #ccc; padding: 1rem; max-height: 300px; overflow-y: auto; }
+    .transcript { margin-bottom: 1rem; padding: 0.5rem; background: #f0f0f0; border-radius: 5px; }
+    .analysis { background: #e6f7ff; border-left: 3px solid #1890ff; }
+    #status { margin-top: 1rem; font-style: italic; color: #666; }
+    #tabPreview { margin-top: 1rem; max-width: 100%; border: 1px solid #ddd; display: none; }
+  </style>
+</head>
+<body>
+
+  <h2>🎙️ Threaded Audio Recorder</h2>
+  <button id="startBtn">Start Recording</button>
+  <button id="stopBtn" disabled>Stop Recording</button>
+  <button id="analyzeBtn" disabled>Ask Question</button>
+  
+  <div id="status">Ready to start recording</div>
+  <video id="tabPreview" autoplay muted playsinline></video>
+  <div id="transcripts"></div>
+
+  <script>
+    // Configuration
+    const CHUNK_DURATION_MS = 10000; // 10 seconds
+    const TRANSCRIPT_ENDPOINT = 'http://127.0.0.1:5000/transcribe';
+    const ANALYSIS_ENDPOINT = 'http://127.0.0.1:5000/analyze';
+
+    // State management
+    const state = {
+      isRecording: false,
+      worker: null,
+      tabStream: null,
+      micStream: null,
+      conversation: []
+    };
+
+    // DOM elements
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const statusEl = document.getElementById('status');
+    const transcriptsEl = document.getElementById('transcripts');
+    const tabPreviewEl = document.getElementById('tabPreview');
+
+    // Create Web Worker from blob URL
+    function createWorker() {
+      const workerCode = `
+        let mediaRecorder;
+        let audioContext;
+        let mixedStream;
+        let conversation = [];
+
+        // Process each audio chunk
+        async function processChunk(blob) {
+          try {
+            // Send to transcription service
+            const formData = new FormData();
+            formData.append("file", blob, "chunk.webm");
+
+            const response = await fetch('${TRANSCRIPT_ENDPOINT}', {
+              method: 'POST',
+              body: formData
+            });
+
+            if (!response.ok) {
+              throw new Error('Transcription failed: ' + response.status);
+            }
+
+            const { text } = await response.json();
+            if (text.trim()) {
+              conversation.push(text);
+              self.postMessage({
+                type: 'transcript',
+                text: text
+              });
+            }
+          } catch (error) {
+            self.postMessage({
+              type: 'error',
+              message: 'Chunk processing failed: ' + error.message
+            });
+          }
+        }
+
+        // Handle messages from main thread
+        self.onmessage = async (e) => {
+          switch (e.data.type) {
+            case 'start':
+              try {
+                const { micStream, tabStream } = e.data;
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const destination = audioContext.createMediaStreamDestination();
+
+                // Connect sources
+                const micSource = audioContext.createMediaStreamSource(micStream);
+                const tabSource = audioContext.createMediaStreamSource(tabStream);
+                micSource.connect(destination);
+                tabSource.connect(destination);
+
+                // Create mixed stream
+                mixedStream = new MediaStream([...destination.stream.getAudioTracks()]);
+
+                // Start recording
+                mediaRecorder = new MediaRecorder(mixedStream, {
+                  mimeType: 'audio/webm;codecs=opus',
+                  audioBitsPerSecond: 128000
+                });
+
+                mediaRecorder.ondataavailable = (event) => {
+                  if (event.data.size > 0) {
+                    processChunk(event.data);
+                  }
+                };
+
+                mediaRecorder.start(${CHUNK_DURATION_MS});
+                self.postMessage({ type: 'started' });
+
+              } catch (error) {
+                self.postMessage({
+                  type: 'error',
+                  message: 'Recording setup failed: ' + error.message
+                });
+              }
+              break;
+
+            case 'stop':
+              if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+              }
+              if (mixedStream) mixedStream.getTracks().forEach(t => t.stop());
+              if (audioContext) audioContext.close();
+              self.postMessage({ type: 'stopped' });
+              break;
+
+            case 'analyze':
+              self.postMessage({
+                type: 'analysis',
+                question: e.data.question,
+                conversation: conversation
+              });
+              break;
+          }
+        };
+      `;
+
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      return new Worker(URL.createObjectURL(blob));
+    }
+
+    // Start recording
+    startBtn.onclick = async () => {
+      try {
+        statusEl.textContent = "Setting up recording...";
+        
+        // Get microphone and tab streams
+        state.micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        
+        state.tabStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: "browser",
+            logicalSurface: true
+          },
+          audio: true,
+          preferCurrentTab: false
+        });
+
+        // Show preview
+        tabPreviewEl.srcObject = state.tabStream;
+        tabPreviewEl.style.display = 'block';
+
+        // Create and start worker
+        state.worker = createWorker();
+        setupWorkerHandlers(state.worker);
+
+        // Send streams to worker
+        state.worker.postMessage({
+          type: 'start',
+          micStream: state.micStream,
+          tabStream: state.tabStream
+        }, [state.micStream, state.tabStream]);
+
+        state.isRecording = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        analyzeBtn.disabled = false;
+
+      } catch (error) {
+        console.error("Error starting recording:", error);
+        statusEl.textContent = `Error: ${error.message}`;
+        if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
+        if (state.tabStream) state.tabStream.getTracks().forEach(t => t.stop());
+      }
+    };
+
+    // Setup worker message handlers
+    function setupWorkerHandlers(worker) {
+      worker.onmessage = (e) => {
+        switch (e.data.type) {
+          case 'started':
+            statusEl.textContent = "Recording in background...";
+            break;
+            
+          case 'stopped':
+            statusEl.textContent = "Recording stopped";
+            break;
+            
+          case 'transcript':
+            addTranscript(e.data.text);
+            break;
+            
+          case 'analysis':
+            displayAnalysis(e.data.question, e.data.response);
+            break;
+            
+          case 'error':
+            console.error("Worker error:", e.data.message);
+            statusEl.textContent = `Error: ${e.data.message}`;
+            break;
+        }
+      };
+
+      worker.onerror = (error) => {
+        console.error("Worker error:", error);
+        statusEl.textContent = `Worker error: ${error.message}`;
+      };
+    }
+
+    // Stop recording
+    stopBtn.onclick = () => {
+      if (!state.isRecording) return;
+      
+      state.isRecording = false;
+      state.worker.postMessage({ type: 'stop' });
+      
+      // Clean up
+      if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
+      if (state.tabStream) state.tabStream.getTracks().forEach(t => t.stop());
+      tabPreviewEl.srcObject = null;
+      tabPreviewEl.style.display = 'none';
+      
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+
+    // Ask question
+    analyzeBtn.onclick = () => {
+      const question = prompt("Enter your question about the conversation:");
+      if (question && question.trim()) {
+        state.worker.postMessage({
+          type: 'analyze',
+          question: question.trim()
+        });
+      }
+    };
+
+    // Add transcript to UI
+    function addTranscript(text) {
+      const div = document.createElement('div');
+      div.className = 'transcript';
+      div.textContent = text;
+      transcriptsEl.prepend(div);
+      state.conversation.push(text);
+    }
+
+    // Display analysis
+    async function displayAnalysis(question, response) {
+      // If we didn't get a response from worker, fetch it
+      if (!response) {
+        try {
+          const res = await fetch(ANALYSIS_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: question,
+              conversation: state.conversation
+            })
+          });
+          response = await res.json();
+        } catch (error) {
+          console.error("Analysis failed:", error);
+          response = { suggestion: "Failed to get analysis" };
+        }
+      }
+
+      const questionDiv = document.createElement('div');
+      questionDiv.className = 'transcript analysis';
+      questionDiv.textContent = `Q: ${question}`;
+      transcriptsEl.prepend(questionDiv);
+
+      const answerDiv = document.createElement('div');
+      answerDiv.className = 'transcript analysis';
+      answerDiv.textContent = `A: ${response.suggestion || response}`;
+      transcriptsEl.prepend(answerDiv);
+    }
+
+    // Clean up worker when page unloads
+    window.addEventListener('beforeunload', () => {
+      if (state.worker) {
+        state.worker.terminate();
+      }
+    });
+  </script>
+</body>
+</html>
