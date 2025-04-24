@@ -152,14 +152,14 @@
             state.processingChunk = true;
               processChunk(e.data);
               
-              const text = model.stt(audioBuffer);
-console.log("Transcription:", text);
-          } catch (error) {
-            console.error("Chunk processing error:", error);
-          } finally {
-            state.processingChunk = false;
-          }
-        }
+              // const text = model.stt(audioBuffer);
+// console.log("Transcription:", text);
+//           } catch (error) {
+//             console.error("Chunk processing error:", error);
+//           } finally {
+//             state.processingChunk = false;
+//           }
+//         }
         
 
       };
