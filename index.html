@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Google Meet Transcript Generator</title>
+  <title>Google Summary Generator</title>
   <style>
     body { font-family: sans-serif; padding: 1rem; }
     #suggestions { margin-top: 1rem; border: 1px solid #ccc; padding: 1rem; max-height: 300px; overflow-y: auto; }
@@ -14,7 +14,7 @@
 </head>
 <body>
 
-  <h2>🎙️ Google Meet Transcribe</h2>
+  <h2>🎙️ Google Summary Generator</h2>
   <button id="startBtn">Start Recording</button>
   <button id="stopBtn" disabled>Stop Recording</button>
   <button id="analyzeBtn" disabled>Analyze Conversation</button>
@@ -32,14 +32,6 @@
 
     const TRANSCRIPT_ENDPOINT = 'https://castright.pythonanywhere.com/transcribe';
     const ANALYSIS_ENDPOINT = 'https://castright.pythonanywhere.com/analyze';
-        // Check for Web Speech API support
-        // if (!('webkitSpeechRecognition' in window)) {
-        //     statusDiv.textContent = 'Error: Speech recognition not supported';
-        //     startBtn.disabled = true;
-        // }else{
-        //   console.log("Web Speech API is supported");
-          
-        // }
 
     // State management
     const state = {
@@ -153,13 +145,13 @@
               processChunk(e.data);
               
               // const text = model.stt(audioBuffer);
-// console.log("Transcription:", text);
-//           } catch (error) {
-//             console.error("Chunk processing error:", error);
-//           } finally {
-//             state.processingChunk = false;
-//           }
-//         }
+ 
+          } catch (error) {
+            console.error("Chunk processing error:", error);
+          } finally {
+            state.processingChunk = false;
+          }
+        }
         
 
       };
