@@ -1,70 +1,356 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Mic + Tab Audio Recorder</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zoom Audio Recorder</title>
+  <style>
+    body { font-family: sans-serif; padding: 1rem; }
+    #suggestions { margin-top: 1rem; border: 1px solid #ccc; padding: 1rem; max-height: 300px; overflow-y: auto; }
+    .suggestion { margin-bottom: 1rem; padding: 0.5rem; background: #f0f0f0; border-radius: 5px; }
+    #status { margin-top: 1rem; font-style: italic; color: #666; }
+    #tabPreview { margin-top: 1rem; max-width: 100%; border: 1px solid #ddd; display: none; }
+  </style>
 </head>
 <body>
-  <h2>Record Mic + Tab Audio</h2>
+
+  <h2>🎙️ Zoom Audio Recorder</h2>
   <button id="startBtn">Start Recording</button>
   <button id="stopBtn" disabled>Stop Recording</button>
+  <button id="analyzeBtn" disabled>Analyze Conversation</button>
+  
+  <div id="status">Ready to start recording</div>
+  <video id="tabPreview" autoplay muted playsinline></video>
+  <div id="suggestions"></div>
+
   <script>
-    let recorder;
-    let micStream;
-    let tabStream;
-    let mixedStream;
-    let chunks = [];
+    // Configuration
+    const CHUNK_DURATION_MS = 5000; // 10 seconds
+    const SILENCE_THRESHOLD = 0.1;
+    // const TRANSCRIPT_ENDPOINT = 'http://127.0.0.1:5000/transcribe';
+    // const ANALYSIS_ENDPOINT = 'http://127.0.0.1:5000/analyze';
 
-    async function startRecording() {
-      // Get mic
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // Get tab with audio (user must pick a tab playing sound)
-      tabStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const TRANSCRIPT_ENDPOINT = 'https://castright.pythonanywhere.com/transcribe';
+    const ANALYSIS_ENDPOINT = 'https://castright.pythonanywhere.com/analyze';
+        // Check for Web Speech API support
+        // if (!('webkitSpeechRecognition' in window)) {
+        //     statusDiv.textContent = 'Error: Speech recognition not supported';
+        //     startBtn.disabled = true;
+        // }else{
+        //   console.log("Web Speech API is supported");
+          
+        // }
 
-      // Use Web Audio API to merge audio
-      const audioContext = new AudioContext();
-      const destination = audioContext.createMediaStreamDestination();
+    // State management
+    const state = {
+      isRecording: false,
+      mediaRecorder: null,
+      mixedStream: null,
+      audioContext: null,
+      conversation: [],
+      processingChunk: false,
+      tabStream: null,
+      micStream: null
+    };
 
-      const micSource = audioContext.createMediaStreamSource(micStream);
-      const tabSource = audioContext.createMediaStreamSource(tabStream);
+    // DOM elements
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const statusEl = document.getElementById('status');
+    const suggestionsEl = document.getElementById('suggestions');
+    const tabPreviewEl = document.getElementById('tabPreview');
 
-      micSource.connect(destination);
-      tabSource.connect(destination);
+    // Start recording
+    startBtn.onclick = async () => {
+      try {
+        statusEl.textContent = "Setting up recording...";
+        
+        // 1. First get microphone access
+        state.micStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        
+        // 2. Then get tab sharing permission
+        state.tabStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: "browser", // Ensures tab sharing
+            logicalSurface: true
+          },
+          audio: true,
+          preferCurrentTab: false // Allow choosing any tab
+        });
+        
+        // Show preview of the shared tab
+        // tabPreviewEl.srcObject = state.tabStream;
+        // tabPreviewEl.style.display = 'block';
+        
+        // Create audio context
+        state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create destination for mixed audio
+        const destination = state.audioContext.createMediaStreamDestination();
 
-      // Combine video from tab + mixed audio
-      mixedStream = new MediaStream([
-        ...tabStream.getVideoTracks(),
-        ...destination.stream.getAudioTracks()
-      ]);
+        // Connect sources if they have audio tracks
+        if (state.micStream.getAudioTracks().length > 0) {
+          const micSource = state.audioContext.createMediaStreamSource(state.micStream);
+          micSource.connect(destination);
+        }
+        
+        if (state.tabStream.getAudioTracks().length > 0) {
+          const tabSource = state.audioContext.createMediaStreamSource(state.tabStream);
+          tabSource.connect(destination);
+        }
 
-      recorder = new MediaRecorder(mixedStream);
-      chunks = [];
+        // Create mixed stream (audio only)
+        state.mixedStream = new MediaStream([...destination.stream.getAudioTracks()]);
 
-      recorder.ondataavailable = e => chunks.push(e.data);
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'mic_tab_recording.webm';
-        a.click();
+        // Start recording
+        startRecordingCycle(state.mixedStream);
+
+        // Update UI
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        analyzeBtn.disabled = false;
+        statusEl.textContent = "Recording tab audio...";
+
+      } catch (error) {
+        console.error("Error starting recording:", error);
+        statusEl.textContent = `Error: ${error.message}`;
+        // Clean up if something failed
+        if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
+        if (state.tabStream) state.tabStream.getTracks().forEach(t => t.stop());
+      }
+    };
+
+    // Recording cycle with proper chunk handling
+    function startRecordingCycle(stream) {
+      if (!stream || stream.getAudioTracks().length === 0) {
+        console.error("No audio tracks available");
+        return;
+      }
+
+      state.isRecording = true;
+      state.mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 128000
+      });
+
+      // Handle available data
+      state.mediaRecorder.ondataavailable = async (e) => {
+                // Restart recording if still active
+                if (state.isRecording) {
+          startRecordingCycle(stream);
+
+        }
+        if (e.data.size > 0) {
+          try {
+            state.processingChunk = true;
+              processChunk(e.data);
+              
+              const text = model.stt(audioBuffer);
+console.log("Transcription:", text);
+          } catch (error) {
+            console.error("Chunk processing error:", error);
+          } finally {
+            state.processingChunk = false;
+          }
+        }
+        
+
       };
 
-      recorder.start();
-      document.getElementById('startBtn').disabled = true;
-      document.getElementById('stopBtn').disabled = false;
+      // Error handling
+      state.mediaRecorder.onerror = (e) => {
+        console.error("MediaRecorder error:", e.error);
+        statusEl.textContent = `Error: ${e.error}`;
+      };
+
+      // Start recording
+      state.mediaRecorder.start();
+      console.log("MediaRecorder started, state:", state.mediaRecorder.state);
+
+      // Stop after chunk duration
+      setTimeout(() => {
+        if (state.mediaRecorder && state.mediaRecorder.state === 'recording') {
+          state.mediaRecorder.stop();
+          console.log("MediaRecorder stopped after timeout");
+        }
+      }, CHUNK_DURATION_MS);
     }
 
-    function stopRecording() {
-      recorder.stop();
-      micStream.getTracks().forEach(t => t.stop());
-      tabStream.getTracks().forEach(t => t.stop());
-      document.getElementById('startBtn').disabled = false;
-      document.getElementById('stopBtn').disabled = true;
+    // Stop recording
+    stopBtn.onclick = () => {
+      if (!state.isRecording) return;
+      
+      state.isRecording = false;
+      
+      // Stop media recorder
+      if (state.mediaRecorder && state.mediaRecorder.state === 'recording') {
+        state.mediaRecorder.stop();
+      }
+      
+      // Clean up streams
+      if (state.mixedStream) state.mixedStream.getTracks().forEach(t => t.stop());
+      if (state.micStream) state.micStream.getTracks().forEach(t => t.stop());
+      if (state.tabStream) state.tabStream.getTracks().forEach(t => t.stop());
+      
+      // Close audio context
+      if (state.audioContext && state.audioContext.state !== 'closed') {
+        state.audioContext.close();
+      }
+      
+      // Hide preview
+      tabPreviewEl.srcObject = null;
+      tabPreviewEl.style.display = 'none';
+      
+      // Update UI
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusEl.textContent = "Recording stopped";
+    };
+
+    // Process each audio chunk
+    async function processChunk(blob) {
+      try {
+        statusEl.textContent = "Processing audio chunk...";
+        
+        // Convert to array buffer
+        const arrayBuffer = await blob.arrayBuffer();
+        
+        // Ensure audio context is ready
+        if (!state.audioContext || state.audioContext.state === 'closed') {
+          state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        
+        // Resume if suspended
+        if (state.audioContext.state === 'suspended') {
+          await state.audioContext.resume();
+        }
+
+        // Decode audio data
+        let audioBuffer;
+        try {
+          audioBuffer = await state.audioContext.decodeAudioData(arrayBuffer);
+        } catch (decodeError) {
+          console.warn("Standard decode failed, trying recovery:", decodeError);
+          const repairedBuffer = repairWebMChunk(arrayBuffer);
+          audioBuffer = await state.audioContext.decodeAudioData(repairedBuffer);
+        }
+
+        // Skip silent chunks
+        if (isAudioSilent(audioBuffer)) {
+          console.log("Skipping silent chunk");
+          return;
+        }
+
+        // Send to transcription service
+        const formData = new FormData();
+        formData.append("file", blob, `chunk_${Date.now()}.webm`);
+
+        const response = await fetch(TRANSCRIPT_ENDPOINT, {
+          method: 'POST', 
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error(`Transcription failed: ${response.status}`);
+        }
+
+        const { text } = await response.json();
+        if (text.trim()) {
+          state.conversation.push(text);
+          addTranscript(text);
+        }
+
+      } catch (error) {
+        console.error("Chunk processing failed:", error);
+        statusEl.textContent = `Error processing chunk: ${error.message}`;
+      } finally {
+        if (state.isRecording) {
+          statusEl.textContent = "Recording tab audio...";
+        }
+      }
     }
 
-    document.getElementById('startBtn').onclick = startRecording;
-    document.getElementById('stopBtn').onclick = stopRecording;
+    // Basic WebM chunk repair
+    function repairWebMChunk(arrayBuffer) {
+      // In production, you would add proper WebM headers here
+      return arrayBuffer;
+    }
+
+    // Check if audio is silent
+    function isAudioSilent(audioBuffer) {
+      const channelData = audioBuffer.getChannelData(0);
+      for (let i = 0; i < channelData.length; i++) {
+        if (Math.abs(channelData[i]) > SILENCE_THRESHOLD) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Send question for analysis
+    async function sendQuestionToAnalysis(question) {
+      if (!question) return;
+      
+      try {
+        const response = await fetch(ANALYSIS_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            question: question,
+            conversation: state.conversation 
+          })
+        });
+        
+        const data = await response.json();
+        displaySuggestion(data.suggestion);
+      } catch (error) {
+        console.error("Analysis failed:", error);
+        // alert("Failed to get analysis. Please try again.");
+      }
+    }
+
+    // Display transcript
+    function addTranscript(text) {
+      const div = document.createElement('div');
+      div.className = 'suggestion';
+      div.innerHTML = text;
+      suggestionsEl.prepend(div);
+    }
+
+    // Display suggestion
+    function displaySuggestion(suggestion) {
+      const div = document.createElement('div');
+      div.className = 'suggestion';
+      div.style.backgroundColor = '#e6f7ff';
+      div.innerHTML = suggestion;
+      suggestionsEl.prepend(div);
+    }
+//     setInterval(function() { 
+//       if(startBtn.disabled) {
+     
+//           // Send the question to analysis
+//           sendQuestionToAnalysis("Analyze the conversation");
+      
+//       }
+//       // sendQuestionToAnalysis("Analyze the conversation")
+//   console.log('This will run every 10 seconds');
+//   // Add any other code you want to run here
+// }, 20000); // 10000 milliseconds = 10 seconds
+    // Handle analyze button
+    analyzeBtn.onclick = () => {
+      // const question = prompt("Ask a question for analysis:");
+      // if (question)
+       {
+        sendQuestionToAnalysis("Analyze the conversation")
+      }
+    };
   </script>
 </body>
 </html>
