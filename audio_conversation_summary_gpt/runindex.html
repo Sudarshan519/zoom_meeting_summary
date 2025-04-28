@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chunked Audio Speech Recognition</title>
+    <style>
+        #output { 
+            border: 1px solid #ccc; 
+            padding: 10px; 
+            min-height: 100px;
+            margin-top: 20px;
+        }
+        .interim { color: gray; }
+    </style>
+</head>
+<body>
+    <h1>Audio Chunk Speech Recognition</h1>
+    <button id="startBtn">Start Listening</button>
+    <button id="stopBtn" disabled>Stop</button>
+    <div id="status">Status: Ready</div>
+    <div id="output"></div>
+
+    <script>
+        // Audio context and buffers
+        let audioContext;
+        let processor;
+        let mediaStream;
+        let audioChunks = [];
+        const CHUNK_DURATION = 1000; // Process every 1 second
+
+        // DOM elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const outputDiv = document.getElementById('output');
+        const statusDiv = document.getElementById('status');
+
+        // Check for Web Speech API support
+        if (!('webkitSpeechRecognition' in window)) {
+            statusDiv.textContent = 'Error: Speech recognition not supported';
+            startBtn.disabled = true;
+        }
+
+        // Initialize audio context
+        function initAudioContext() {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            return audioContext;
+        }
+
+        // Start recording
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaStream = stream;
+                
+                const audioContext = initAudioContext();
+                const source = audioContext.createMediaStreamSource(stream);
+                
+                // Create script processor for chunk processing
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Buffer to accumulate audio data
+                let audioBuffer = [];
+                let lastProcessTime = 0;
+                
+                processor.onaudioprocess = (e) => {
+                    const currentTime = Date.now();
+                    
+                    // Get audio data and convert to 16-bit PCM
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    audioBuffer.push(...Array.from(inputData));
+                    
+                    // Process chunk every CHUNK_DURATION ms
+                    if (currentTime - lastProcessTime >= CHUNK_DURATION) {
+                        processAudioChunk(new Float32Array(audioBuffer));
+                        audioBuffer = [];
+                        lastProcessTime = currentTime;
+                    }
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                statusDiv.textContent = 'Status: Recording...';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                console.error(error);
+            }
+        }
+
+        // Process audio chunk (simulated recognition)
+        function processAudioChunk(chunk) {
+            // In a real implementation, you would send this to a speech recognition engine
+            // For demo purposes, we'll just show the chunk info
+            outputDiv.innerHTML += `<p>Processed audio chunk (${chunk.length} samples)</p>`;
+            
+            // Here you would:
+            // 1. Convert to required format (e.g., 16kHz 16-bit PCM for DeepSpeech)
+            // 2. Send to your recognition engine
+            // 3. Display results
+        }
+
+        // Stop recording
+        function stopRecording() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+            if (processor) {
+                processor.disconnect();
+            }
+            if (audioContext) {
+                audioContext.close();
+            }
+            
+            statusDiv.textContent = 'Status: Stopped';
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startRecording);
+        stopBtn.addEventListener('click', stopRecording);
+    </script>
+</body>
+</html>

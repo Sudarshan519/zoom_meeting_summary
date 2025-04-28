@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Stream Transcription</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        button.stop {
+            background-color: #f44336;
+        }
+        #transcript {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 100px;
+            background-color: #fafafa;
+        }
+        #suggestions {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #fffde7;
+        }
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Meeting Assistant</h1>
+        <p>Stream your system audio for real-time transcription and suggestions</p>
+        
+        <button id="startBtn">Start Streaming</button>
+        <button id="stopBtn" class="stop" disabled>Stop Streaming</button>
+        
+        <div class="status" id="status">Status: Not connected</div>
+        
+        <h2>Transcript</h2>
+        <div id="transcript"></div>
+        
+        <h2>Suggestions</h2>
+        <div id="suggestions"></div>
+    </div>
+
+    <!-- Include Socket.IO client -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
+    <script>
+        // WebSocket connection
+        const socket = io('http://localhost:5000');
+        
+        // DOM elements
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const transcriptDiv = document.getElementById('transcript');
+        const suggestionsDiv = document.getElementById('suggestions');
+        
+        // Audio variables
+        let audioContext;
+        let mediaStream;
+        let processor;
+        let recording = false;
+        let audioChunks = [];
+        let mediaRecorder;
+        
+        // Handle WebSocket connection
+        socket.on('connect', () => {
+            statusDiv.textContent = 'Status: Connected to server';
+            console.log('Connected to WebSocket server');
+        });
+        
+        socket.on('disconnect', () => {
+            statusDiv.textContent = 'Status: Disconnected from server';
+            console.log('Disconnected from WebSocket server');
+        });
+        
+        // Handle transcription results
+        socket.on('transcription_result', (data) => {
+            transcriptDiv.innerHTML += `<p><strong>Transcript:</strong> ${data.text}</p>`;
+            transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+        });
+        
+        // Handle suggestions
+        socket.on('suggestion', (data) => {
+            suggestionsDiv.innerHTML = `<div><strong>Suggestion:</strong> ${data.suggestion}</div>`;
+        });
+        
+        // Handle errors
+        socket.on('error', (data) => {
+            statusDiv.textContent = `Status: Error - ${data.message}`;
+            console.error('Error:', data.message);
+        });
+        
+        // Start streaming button
+        startBtn.addEventListener('click', async () => {
+            try {
+                statusDiv.textContent = 'Status: Requesting system audio...';
+                
+                // Get system audio (this requires proper permissions)
+                const audioStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        mandatory: {
+                            chromeMediaSource: 'desktop',
+                            chromeMediaSourceId: await getDesktopStreamId()
+                        }
+                    },
+                    video: false
+                });
+                
+                // Alternative for regular microphone if system audio isn't available
+                // const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                statusDiv.textContent = 'Status: Audio stream acquired, starting recording...';
+                
+                // Set up audio context
+                audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(audioStream);
+                
+                // Create processor node
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Process audio data
+                processor.onaudioprocess = (e) => {
+                    if (!recording) return;
+                    const audioData = e.inputBuffer.getChannelData(0);
+                    // Here you could process the audio data before sending
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Set up MediaRecorder for WebM format
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm'
+                });
+                
+                mediaRecorder.ondataavailable = (e) => {
+                    if (e.data.size > 0) {
+                        sendAudioChunk(e.data);
+                    }
+                };
+                
+                // Start recording in 1-second chunks
+                mediaRecorder.start(1000);
+                recording = true;
+                
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusDiv.textContent = 'Status: Recording and streaming audio...';
+                
+            } catch (error) {
+                console.error('Error starting audio:', error);
+                statusDiv.textContent = `Status: Error - ${error.message}`;
+            }
+        });
+        
+        // Stop streaming button
+        stopBtn.addEventListener('click', () => {
+            if (mediaRecorder && recording) {
+                mediaRecorder.stop();
+                recording = false;
+                
+                if (processor) {
+                    processor.disconnect();
+                }
+                
+                if (mediaStream) {
+                    mediaStream.getTracks().forEach(track => track.stop());
+                }
+                
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusDiv.textContent = 'Status: Recording stopped';
+            }
+        });
+        
+        // Function to get desktop stream ID (Electron-specific)
+        async function getDesktopStreamId() {
+            // In a real Electron app, you would use desktopCapturer
+            if (window.electron && window.electron.desktopCapturer) {
+                const sources = await window.electron.desktopCapturer.getSources({ types: ['window', 'screen'] });
+                return sources[0].id;
+            }
+            // Fallback for browser (won't work for system audio)
+            return '';
+        }
+        
+        // Send audio chunk to server
+        function sendAudioChunk(chunk) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const arrayBuffer = reader.result;
+                socket.emit('transcribe_audio', {
+                    audioData: arrayBuffer
+                });
+            };
+            reader.readAsArrayBuffer(chunk);
+        }
+        
+        // For demo purposes - in a real app you'd use proper Electron desktopCapturer
+        console.log('Note: System audio capture requires proper permissions and may need Electron');
+    </script>
+</body>
+</html>

@@ -89,9 +89,9 @@ def transcribe_audio(file_path):
     audio_file_path = 'combined_audio.wav'  # Path to the audio file you want to transcribe
     model = 'whisper-1'
     language = 'en'
-
+    api_key = os.environ.get("WHISPER_AI_KEY",'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')
     headers = {
-        'Authorization': f'Bearer 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'
+        'Authorization': f'Bearer {api_key}'
     }
 
     with open(audio_file_path, 'rb') as audio_file:
@@ -122,8 +122,9 @@ Please extract:
 - Issues or concerns
 - Suggestions for improvement
 """
+    api_key=os.environ.get("WHISPER_AI_KEY",'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')
     headers = {
-        'Authorization': f'Bearer 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'
+        'Authorization': f'Bearer {api_key}'
     }
 
     data = {

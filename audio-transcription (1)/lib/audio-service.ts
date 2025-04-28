@@ -18,7 +18,7 @@ export async function sendAudioChunkForProcessing(audioChunk: Blob) {
     // Convert blob to array buffer for server processing
     const arrayBuffer = await audioChunk.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
-
+ 
     // Create a temporary file path
     const tempFilePath = join(tmpdir(), `audio-chunk-${Date.now()}.webm`)
 

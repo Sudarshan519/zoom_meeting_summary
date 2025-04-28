@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live Tab Audio Recorder</title>
+  <title>Google Summary Generator</title>
   <style>
     body { font-family: sans-serif; padding: 1rem; }
     #suggestions { margin-top: 1rem; border: 1px solid #ccc; padding: 1rem; max-height: 300px; overflow-y: auto; }
@@ -14,7 +14,7 @@
 </head>
 <body>
 
-  <h2>🎙️ Live Tab Audio Recorder</h2>
+  <h2>🎙️ Google Summary Generator</h2>
   <button id="startBtn">Start Recording</button>
   <button id="stopBtn" disabled>Stop Recording</button>
   <button id="analyzeBtn" disabled>Analyze Conversation</button>
@@ -26,9 +26,12 @@
   <script>
     // Configuration
     const CHUNK_DURATION_MS = 5000; // 10 seconds
-    const SILENCE_THRESHOLD = 0.01;
+    const SILENCE_THRESHOLD = 0.1;
     const TRANSCRIPT_ENDPOINT = 'http://127.0.0.1:5000/transcribe';
     const ANALYSIS_ENDPOINT = 'http://127.0.0.1:5000/analyze';
+
+    // const TRANSCRIPT_ENDPOINT = 'https://castright.pythonanywhere.com/transcribe';
+    // const ANALYSIS_ENDPOINT = 'https://castright.pythonanywhere.com/analyze';
 
     // State management
     const state = {
@@ -75,8 +78,8 @@
         });
         
         // Show preview of the shared tab
-        tabPreviewEl.srcObject = state.tabStream;
-        tabPreviewEl.style.display = 'block';
+        // tabPreviewEl.srcObject = state.tabStream;
+        // tabPreviewEl.style.display = 'block';
         
         // Create audio context
         state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -134,11 +137,15 @@
                 // Restart recording if still active
                 if (state.isRecording) {
           startRecordingCycle(stream);
+
         }
         if (e.data.size > 0) {
           try {
             state.processingChunk = true;
-            await processChunk(e.data);
+              processChunk(e.data);
+              
+              // const text = model.stt(audioBuffer);
+ 
           } catch (error) {
             console.error("Chunk processing error:", error);
           } finally {
@@ -238,7 +245,7 @@
         formData.append("file", blob, `chunk_${Date.now()}.webm`);
 
         const response = await fetch(TRANSCRIPT_ENDPOINT, {
-          method: 'POST',
+          method: 'POST', 
           body: formData
         });
 
@@ -297,7 +304,7 @@
         displaySuggestion(data.suggestion);
       } catch (error) {
         console.error("Analysis failed:", error);
-        alert("Failed to get analysis. Please try again.");
+        // alert("Failed to get analysis. Please try again.");
       }
     }
 
@@ -305,7 +312,7 @@
     function addTranscript(text) {
       const div = document.createElement('div');
       div.className = 'suggestion';
-      div.textContent = text;
+      div.innerHTML = text;
       suggestionsEl.prepend(div);
     }
 
@@ -314,10 +321,20 @@
       const div = document.createElement('div');
       div.className = 'suggestion';
       div.style.backgroundColor = '#e6f7ff';
-      div.textContent = suggestion;
+      div.innerHTML = suggestion;
       suggestionsEl.prepend(div);
     }
-
+//     setInterval(function() { 
+//       if(startBtn.disabled) {
+     
+//           // Send the question to analysis
+//           sendQuestionToAnalysis("Analyze the conversation");
+      
+//       }
+//       // sendQuestionToAnalysis("Analyze the conversation")
+//   console.log('This will run every 10 seconds');
+//   // Add any other code you want to run here
+// }, 20000); // 10000 milliseconds = 10 seconds
     // Handle analyze button
     analyzeBtn.onclick = () => {
       // const question = prompt("Ask a question for analysis:");
