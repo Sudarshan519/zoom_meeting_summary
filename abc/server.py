@@ -15,7 +15,7 @@ app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
 model = whisper.load_model("medium")
 
 audio_buffers = {}
-buffer_threshold = 16000 *  2 * 5 # 3 seconds * 16000 samples/sec * 4 bytes per float32
+buffer_threshold = 16000 *  2 * 4 # 3 seconds * 16000 samples/sec * 4 bytes per float32
 
 sample_rate = 16000
 channels = 1
