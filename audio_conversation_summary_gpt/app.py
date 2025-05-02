@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using F
 
 import time
 import whisper
-model = whisper.load_model("base")
+model = whisper.load_model("small")
 def transcribeWhisper(file):
     name=f'audio.webm'
     with open(name, "wb") as f:
@@ -185,8 +185,10 @@ def transcribe():
             audio_file = open(temp.name, "rb")
             # with open('audio.webm', "wb") as f:
             #     file.save(f)
-            # transcribp=transcribeWhisper(file)
-            # return jsonify({"text":(transcribp)})
+            transcribp=transcribeWhisper(file)
+            suggestion=makeSuggestion(transcribp)
+
+            return jsonify({"text":(transcribp)+"----->Suggestion\n\n"+suggestion})
             audioTranscript=transcribeAudio(file)
             # temp.flush()
             conversation.append(audioTranscript)

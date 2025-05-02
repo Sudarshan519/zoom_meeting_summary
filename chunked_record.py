@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 import os
 # Tweakable Parameters
 SILENCE_THRESHOLD = 0.01  # RMS energy below this = silence
-SILENCE_DURATION = 1.5    # seconds of silence to consider a break (speech finished)
+SILENCE_DURATION = 1   # seconds of silence to consider a break (speech finished)
 import warnings
 
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")

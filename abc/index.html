@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tab Audio Transcription</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        button { padding: 10px 20px; margin: 10px 0; }
+        #transcription { margin-top: 20px; border: 1px solid #ccc; padding: 10px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h2>Live Tab Audio Transcription</h2>
+    <button id="startBtn">Start Capture</button>
+    <button id="stopBtn" disabled>Stop Capture</button>
+    <div id="transcription">Transcription will appear here...</div>
+
+    <script>
+        const silenceThreshold = 0.01; // Energy threshold to consider a chunk as silence (adjust as needed)
+
+                // Calculate energy of the audio buffer to determine if it's silent
+        function isSilent(audioBuffer) {
+            let energy = 0;
+            for (let i = 0; i < audioBuffer.length; i++) {
+                energy += Math.pow(audioBuffer[i], 2);  // Squared value represents the energy
+            }
+            return energy < silenceThreshold;
+        }
+
+        const socket = io('http://localhost:3000'); // Make sure to use your actual server address
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const transcriptionDiv = document.getElementById('transcription');
+
+        let displayStream;
+        let audioContext;
+        let processor;
+        let isCapturing = false;
+
+        startBtn.onclick = async () => {
+            if (isCapturing) return; // Prevent multiple clicks
+
+            isCapturing = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+
+            try {
+                // Get tab audio via display media
+                displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+
+                // Mute the video to avoid feedback
+                const videoTrack = displayStream.getVideoTracks()[0];
+                const audioTrack = displayStream.getAudioTracks()[0];
+                const audioStream = new MediaStream([audioTrack]);
+
+                // Create an audio context to process the stream
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(audioStream);
+
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                processor.onaudioprocess = (e) => {
+                    const input = e.inputBuffer.getChannelData(0);
+                    const float32 = new Float32Array(input);
+                      // Check if the audio chunk is silent
+                      if (!isSilent(float32)) {
+                        socket.emit('mic_audio', float32.buffer);
+                    }else{
+                        console.log("Silence detected, not sending audio data.");
+                    }
+                    // socket.emit('mic_audio', float32.buffer);
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+            } catch (err) {
+                console.error("Failed to capture tab audio:", err);
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        };
+
+        stopBtn.onclick = () => {
+            if (!isCapturing) return;
+
+            isCapturing = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+
+            if (displayStream) {
+                // Stop all tracks
+                displayStream.getTracks().forEach(track => track.stop());
+            }
+
+            if (processor) processor.disconnect();
+            if (audioContext) audioContext.close();
+        };
+
+        socket.on('server_response', (data) => {
+            transcriptionDiv.textContent += data.message + '\n';
+        });
+    </script>
+</body>
+</html>

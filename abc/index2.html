@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Capture Tab & Microphone Stream</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body { font-family: sans-serif; }
+        button { padding: 10px 20px; margin-top: 10px; cursor: pointer; }
+        #status { margin-top: 20px; font-weight: bold; }
+        #tabStreamDisplay { margin-top: 10px; }
+        #transcription { margin-top: 10px; border: 1px solid #ccc; padding: 10px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Capture Tab & Microphone Stream</h1>
+
+    <p>Click "Start Capture" to share your current tab and microphone audio.</p>
+
+    <button id="startCapture">Start Capture</button>
+    <button id="stopCapture" disabled>Stop Capture</button>
+
+    <div id="status">Status: Disconnected</div>
+    <!-- <div id="tabStreamDisplay"></div> -->
+    <div>Transcription:</div>
+    <div id="transcription"></div>
+
+    <script>
+        const socket = io('http://127.0.0.1:6000'); // Replace with your server address
+
+        const startCaptureButton = document.getElementById('startCapture');
+        const stopCaptureButton = document.getElementById('stopCapture');
+        const statusDiv = document.getElementById('status');
+        // const tabStreamDisplay = document.getElementById('tabStreamDisplay');
+        const transcriptionDiv = document.getElementById('transcription'); // Get the transcription div
+
+        let tabMediaStream;
+        let microphoneMediaStream;
+        let tabAudioContext;
+        let tabAudioSource;
+        let micAudioContext;
+        let micAudioSource;
+
+        const bufferSize = 1024;
+        const sampleRate = 48000; // Adjust as needed
+
+        socket.on('connect', () => {
+            statusDiv.textContent = 'Status: Connected to Server';
+            startCaptureButton.disabled = false;
+        });
+
+        socket.on('disconnect', () => {
+            statusDiv.textContent = 'Status: Disconnected from Server';
+            startCaptureButton.disabled = true;
+            stopCaptureButton.disabled = true;
+            stopCapture();
+        });
+
+        socket.on('server_response', (data) => {
+            console.log('Transcription:', data.message);
+            transcriptionDiv.textContent += data.message + '\n'; // Append transcription to the div
+        });
+
+        async function startCapture() {
+            statusDiv.textContent = 'Status: Requesting Permissions...';
+            startCaptureButton.disabled = true;
+
+            try {
+                tabMediaStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+                if (tabMediaStream) {
+                    statusDiv.textContent = 'Status: Tab Stream Acquired.';
+                    const videoElement = document.createElement('video');
+                    videoElement.autoplay = true;
+                    videoElement.style.maxWidth = '100%';
+                    videoElement.srcObject = tabMediaStream;
+                    // tabStreamDisplay.appendChild(videoElement);
+                    processAndSendAudio(tabMediaStream.getAudioTracks()[0], 'tab_audio');
+                } else {
+                    statusDiv.textContent = 'Status: Failed to acquire tab stream.';
+                    startCaptureButton.disabled = false;
+                    return;
+                }
+
+                microphoneMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                if (microphoneMediaStream) {
+                    statusDiv.textContent += ' Microphone Acquired.';
+                    processAndSendAudio(microphoneMediaStream.getAudioTracks()[0], 'mic_audio');
+                    stopCaptureButton.disabled = false;
+                } else {
+                    statusDiv.textContent += ' Failed to acquire microphone.';
+                    startCaptureButton.disabled = false;
+                    stopCapture();
+                }
+
+            } catch (err) {
+                console.error("Error capturing streams:", err);
+                statusDiv.textContent = 'Status: Error capturing streams: ' + err.message;
+                startCaptureButton.disabled = false;
+                stopCaptureButton.disabled = true;
+                stopCapture();
+            }
+        }
+
+        function processAndSendAudio(audioTrack, eventName) {
+            if (!audioTrack) return;
+
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRate });
+            const source = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+            const scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+
+            scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
+                const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
+                const float32Buffer = new Float32Array(inputData);
+                socket.emit(eventName, float32Buffer.buffer); // Send as ArrayBuffer
+            };
+
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+            // audioContext.resume(); // May be needed in some browsers
+        }
+
+        function stopCapture() {
+            if (tabMediaStream) {
+                tabMediaStream.getTracks().forEach(track => track.stop());
+                tabMediaStream = null;
+            }
+            if (microphoneMediaStream) {
+                microphoneMediaStream.getTracks().forEach(track => track.stop());
+                microphoneMediaStream = null;
+            }
+            if (tabAudioContext) tabAudioContext.close().catch(e => console.error("Error closing tab audio context:", e));
+            if (micAudioContext) micAudioContext.close().catch(e => console.error("Error closing mic audio context:", e));
+            startCaptureButton.disabled = false;
+            stopCaptureButton.disabled = true;
+            statusDiv.textContent = 'Status: Idle';
+            // tabStreamDisplay.innerHTML = '';
+            transcriptionDiv.textContent = ''; // Clear transcription on stop
+        }
+
+        startCaptureButton.addEventListener('click', startCapture);
+        stopCaptureButton.addEventListener('click', stopCapture);
+    </script>
+</body>
+</html>

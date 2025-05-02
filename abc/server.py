@@ -15,7 +15,7 @@ app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
 model = whisper.load_model("medium")
 
 audio_buffers = {}
-buffer_threshold = 16000 *  2 * 4 # 3 seconds * 16000 samples/sec * 4 bytes per float32
+buffer_threshold = 16000*2*10# 3 seconds * 16000 samples/sec * 4 bytes per float32
 
 sample_rate = 16000
 channels = 1
@@ -70,8 +70,8 @@ def mic_audio(sid, data):
             sio.emit('server_response', {'message': transcription}, room=sid)
 
             # Reset buffer
-            buffer.seek(0)
-            buffer.truncate()
+            # buffer.seek(0)
+            # buffer.truncate()
 
     except Exception as e:
         print(f"Error during audio processing: {e}")
@@ -82,4 +82,4 @@ def index():
     return "WebSocket server is running!"
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=6000)
+    app.run(host='0.0.0.0', port=3000,debug=True)
