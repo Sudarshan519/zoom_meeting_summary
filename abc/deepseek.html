@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Tab Audio Transcription</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        button { 
+            padding: 10px 20px; 
+            margin: 10px 5px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        #startBtn { background-color: #4CAF50; color: white; }
+        #stopBtn { background-color: #f44336; color: white; }
+        #transcription { 
+            margin-top: 20px; 
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            white-space: pre-wrap;
+            min-height: 200px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        #status {
+            margin: 10px 0;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .active { background-color: #e7f3fe; }
+        .error { background-color: #ffebee; color: #d32f2f; }
+        .success { background-color: #e8f5e9; color: #2e7d32; }
+    </style>
+</head>
+<body>
+    <h2>Live Tab Audio Transcription</h2>
+    <div id="status">Ready to start...</div>
+    <button id="startBtn">Start Capture</button>
+    <button id="stopBtn" disabled>Stop Capture</button>
+    <div id="transcription">Transcription will appear here...</div>
+
+    <script>
+        // Configuration
+        const config = {
+            silenceThreshold: 0.01, // Adjust based on your needs
+            serverUrl: 'http://localhost:3000',
+            bufferSize: 4096,
+            sampleRate: 16000
+        };
+
+        // DOM Elements
+        const socket = io(config.serverUrl);
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const transcriptionDiv = document.getElementById('transcription');
+        const statusDiv = document.getElementById('status');
+
+        // State variables
+        let displayStream = null;
+        let audioContext = null;
+        let processor = null;
+        let isCapturing = false;
+        let silenceCounter = 0;
+
+        // Update status display
+        function updateStatus(message, type = '') {
+            statusDiv.textContent = message;
+            statusDiv.className = type;
+        }
+
+        // Calculate audio energy to detect silence
+        function calculateEnergy(audioBuffer) {
+            let energy = 0;
+            for (let i = 0; i < audioBuffer.length; i++) {
+                energy += audioBuffer[i] * audioBuffer[i];
+            }
+            return energy / audioBuffer.length;
+        }
+
+        // Initialize Socket.IO connection
+        function setupSocket() {
+            socket.on('connect', () => {
+                updateStatus('Connected to server', 'success');
+            });
+
+            socket.on('disconnect', () => {
+                updateStatus('Disconnected from server', 'error');
+            });
+
+            socket.on('connect_error', (err) => {
+                updateStatus(`Connection error: ${err.message}`, 'error');
+            });
+
+            socket.on('server_response', (data) => {
+                const message = data.message || '';
+                const suggestion = data.suggestion ? `\n\nSuggestion: ${data.suggestion}` : '';
+                transcriptionDiv.textContent += `${new Date().toLocaleTimeString()}: ${message}${suggestion}\n\n`;
+                transcriptionDiv.scrollTop = transcriptionDiv.scrollHeight;
+            });
+
+            socket.on('server_error', (data) => {
+                updateStatus(`Server error: ${data.error}`, 'error');
+            });
+        }
+
+        // Start audio capture
+        async function startCapture() {
+            if (isCapturing) return;
+
+            updateStatus('Starting audio capture...', 'active');
+            isCapturing = true;
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+
+            try {
+                // Get tab audio via display media
+                displayStream = await navigator.mediaDevices.getDisplayMedia({ 
+                    video: true, 
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        sampleRate: config.sampleRate
+                    }
+                });
+
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: config.sampleRate
+                });
+
+                const source = audioContext.createMediaStreamSource(displayStream);
+                processor = audioContext.createScriptProcessor(config.bufferSize, 1, 1);
+
+                processor.onaudioprocess = (e) => {
+                    const input = e.inputBuffer.getChannelData(0);
+                    const energy = calculateEnergy(input);
+                    
+                    if (energy > config.silenceThreshold) {
+                        silenceCounter = 0;
+                        const float32 = new Float32Array(input);
+                        socket.emit('mic_audio', float32.buffer);
+                    } else {
+                        silenceCounter++;
+                        if (silenceCounter > 5) { // Only log after consecutive silent chunks
+                            console.debug("Silence detected, skipping...");
+                        }
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                updateStatus('Capturing audio...', 'active');
+
+                // Handle when the user stops sharing via browser UI
+                displayStream.getVideoTracks()[0].onended = () => {
+                    stopCapture();
+                };
+
+            } catch (err) {
+                console.error("Capture error:", err);
+                updateStatus(`Error: ${err.message}`, 'error');
+                stopCapture();
+            }
+        }
+
+        // Stop audio capture
+        function stopCapture() {
+            if (!isCapturing) return;
+
+            updateStatus('Stopping capture...', 'active');
+            isCapturing = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+
+            if (displayStream) {
+                displayStream.getTracks().forEach(track => track.stop());
+                displayStream = null;
+            }
+
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+
+            if (audioContext) {
+                audioContext.close().catch(console.error);
+                audioContext = null;
+            }
+
+            updateStatus('Capture stopped', '');
+        }
+
+        // Event listeners
+        startBtn.addEventListener('click', startCapture);
+        stopBtn.addEventListener('click', stopCapture);
+
+        // Initialize
+        setupSocket();
+
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (isCapturing) {
+                stopCapture();
+            }
+            if (socket.connected) {
+                socket.disconnect();
+            }
+        });
+    </script>
+</body>
+</html>
