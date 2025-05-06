@@ -285,7 +285,11 @@
       }
       return true;
     }
-
+    function isReallySilent(audioBuffer, threshold = 0.01) {
+    const energy = audioBuffer.reduce((sum, sample) => sum + sample * sample, 0);
+    const rms = Math.sqrt(energy / audioBuffer.length);
+    return rms < threshold;
+}
     // Send question for analysis
     async function sendQuestionToAnalysis(question) {
       if (!question) return;

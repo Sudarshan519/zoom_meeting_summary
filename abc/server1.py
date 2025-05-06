@@ -121,9 +121,9 @@ def mic_audio(sid, data):
             transcription = result['text'].strip()
             print(f"[{sid}] Transcription: {transcription}")
             sio.emit('server_response', {'message': transcription}, room=sid)
-            suggestion=makeSuggestion(transcription)
+            # suggestion=makeSuggestion(transcription)
             # suggestion = ''
-            sio.emit('server_response_suggestion', {'message':" \n"+ markdown.markdown(suggestion)}, room=sid)
+            # sio.emit('server_response_suggestion', {'message':" \n"+ markdown.markdown(suggestion)}, room=sid)
 
             os.remove(temp_path)
             buffer.seek(0)
