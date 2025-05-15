@@ -231,6 +231,8 @@
             statusDiv.className = "active";
             
             try {
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
                 displayStream = await navigator.mediaDevices.getDisplayMedia({ 
                     video: true, 
                     audio: {
@@ -239,12 +241,15 @@
                         sampleRate: SAMPLE_RATE
                     }
                 });
-
+                const combined = new MediaStream([
+  ...displayStream.getAudioTracks(),
+  ...audioStream.getAudioTracks()
+]);
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({
                     sampleRate: SAMPLE_RATE
                 });
 
-                const source = audioContext.createMediaStreamSource(displayStream);
+                const source = audioContext.createMediaStreamSource(combined);
                 processor = audioContext.createScriptProcessor(4096, 1, 1);
 
                 processor.onaudioprocess = (e) => {

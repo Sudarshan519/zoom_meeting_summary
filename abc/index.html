@@ -231,21 +231,29 @@
             statusDiv.className = "active";
             
             try {
-                displayStream = await navigator.mediaDevices.getDisplayMedia({ 
-                    video: true, 
-                    audio: {
-                        echoCancellation: false,
-                        noiseSuppression: false,
-                        sampleRate: SAMPLE_RATE
-                    }
-                });
+                const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true // Only works for Chrome tab sharing
+    });
 
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: SAMPLE_RATE
-                });
+    const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: true
+    });
 
-                const source = audioContext.createMediaStreamSource(displayStream);
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+    const destination = audioContext.createMediaStreamDestination();
+
+    const displayAudioSource = audioContext.createMediaStreamSource(displayStream);
+    const micAudioSource = audioContext.createMediaStreamSource(micStream);
+
+    displayAudioSource.connect(destination);
+    micAudioSource.connect(destination);
+
+    const finalAudio = audioContext.createMediaStreamSource(destination.stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    finalAudio.connect(processor);
+    processor.connect(audioContext.destination);
 
                 processor.onaudioprocess = (e) => {
                     const input = e.inputBuffer.getChannelData(0);
@@ -276,8 +284,8 @@
                     }
                 };
 
-                source.connect(processor);
-                processor.connect(audioContext.destination);
+                // source.connect(processor);
+                // processor.connect(audioContext.destination);
                 
                 isCapturing = true;
                 startBtn.disabled = true;
@@ -286,7 +294,14 @@
                 
                 // Handle when user stops sharing via browser UI
                 displayStream.getVideoTracks()[0].onended = stopCapture;
-                
+            micStream.getAudioTracks()[0].onended = stopCapture;
+
+                // Store references
+                displayStream = displayStream;
+                audioContext = audioContext;
+                processor = processor;
+
+                console.log("Capture started");
             } catch (err) {
                 console.error("Capture error:", err);
                 statusDiv.textContent = `Error: ${err.message}`;
