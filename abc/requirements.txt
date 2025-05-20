@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-socketio[asyncio_server]
+python-engineio
+openai
+numpy
+git+https://github.com/openai/whisper.git
+python-dotenv
+markdown

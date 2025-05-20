@@ -27,9 +27,10 @@ app = Flask(__name__)
 sio = socketio.Server(cors_allowed_origins="*")
 app.wsgi_app = socketio.WSGIApp(sio, app.wsgi_app)
 
-model = whisper.load_model("small")  # Change to "medium" or "large" if needed
+model = whisper.load_model("base")  # Change to "medium" or "large" if needed
 
 audio_buffers = {}
+tab_buffers = {}
 sample_rate = 16000
 channels = 1
 conversation=[]
@@ -90,7 +91,50 @@ def transcribe_audio(sid, file_path):
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
-            
+@sio.event 
+def tab_audio(sid, data):
+    try:
+        buffer = tab_buffers.get(sid)
+        if buffer is None:
+            buffer = io.BytesIO()
+            audio_buffers[sid] = buffer
+
+        buffer.write(data)
+
+        if buffer.tell() >= buffer_threshold:
+            print(f"[{sid}] Processing {buffer.tell()} bytes")
+
+            buffer.seek(0)
+            audio_np = np.frombuffer(buffer.read(), dtype=np.float32)
+            audio_int16 = (audio_np * 32767).astype(np.int16)
+
+            temp_path = f"temp_{sid}_{int(time.time())}.wav"
+            with wave.open(temp_path, 'wb') as wf:
+                wf.setnchannels(channels)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(audio_int16.tobytes())
+        # Step 3: Start transcription in a separate thread
+            # threading.Thread(target=transcribe_audio, args=(sid, temp_path, result)).start()
+
+            result = model.transcribe(temp_path, fp16=False)
+            transcription = result['text'].strip()
+            print(f"[{sid}] Transcription: {transcription}")
+            sio.emit('server_response', {'message': transcription}, room=sid)
+            suggestion=makeSuggestion(transcription)
+            # suggestion = ''
+            sio.emit('server_response_suggestion', {'message':" \n"+ markdown.markdown(suggestion)}, room=sid)
+
+            os.remove(temp_path)
+            buffer.seek(0)
+            buffer.truncate()
+
+    except Exception as e:
+        print(f"[{sid}] Error: {e}")
+        sio.emit('server_response', {'message': 'Error processing audio'}, room=sid)
+ 
+    
+
 @sio.event
 def mic_audio(sid, data):
     try:

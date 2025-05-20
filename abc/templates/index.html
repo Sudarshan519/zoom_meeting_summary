@@ -130,9 +130,13 @@
         let startTime = Date.now() / 1000;
         let lastActiveTime = Date.now() / 1000;
         let opusEncoder = null;
+        socket = io('http://localhost:3000', {
+        transports: ['websocket']
+      });
         
+      socket.on('connect', () => log('[+] Connected to server'));
         // DOM Elements
-        const socket = io('http://localhost:3000',{transports: ["websocket"],});
+        // const socket = io('http://localhost:3000');
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const statusDiv = document.getElementById('status');
@@ -180,7 +184,7 @@
         }
 
         // Silence detection
-        function isReallySilent(audioBuffer, threshold = 0.01) {
+        function isReallySilent(audioBuffer, threshold = SILENCE_THRESHOLD) {
             let energy = 0;
             for (let i = 0; i < audioBuffer.length; i++) {
                 energy += audioBuffer[i] * audioBuffer[i];
